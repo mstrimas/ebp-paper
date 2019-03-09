@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+03_cci-calculation.R
+data/cci*
+
+data/ebd_global-checklists.txt
+output/08_global-effort_sf.rds
+packrat/lib*/

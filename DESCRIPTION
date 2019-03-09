@@ -1,0 +1,52 @@
+Package: ebppaper
+Title: eBird Best Practices Paper
+Version: 0.1
+Authors@R: 
+    person(given = "Matthew",
+           family = "Strimas-Mackey",
+           role = c("aut", "cre"),
+           email = "mes335@cornell.edu",
+           comment = c(ORCID = "0000-0001-8929-7776"))
+Description: This is a metapackage that installs all the
+    dependencies for the paper "Best practices for making reliable
+    inferences from citizen science data: case study using eBird to
+    estimate species distributions".
+License: GPL-3
+URL: https://github.com/mstrimas/ebp-paper
+Depends: 
+    R (>= 3.1.0)
+Imports:
+    AICcmodavg,
+    auk,
+    data.table,
+    dggridR,
+    dplyr,
+    edarf,
+    fasterize,
+    fields,
+    ggplot2,
+    ggthemes,
+    hexbin,
+    janitor,
+    maxnet,
+    mgcv,
+    MODIS,
+    MuMIn,
+    PresenceAbsence,
+    purrr,
+    ranger,
+    raster,
+    readr,
+    rnaturalearth,
+    rvest,
+    scam,
+    sf,
+    stringr,
+    tidyr,
+    unmarked,
+    verification,
+    viridis,
+    tibble,
+    forcats,
+    smoothr
+RoxygenNote: 6.1.1
