@@ -140,7 +140,9 @@ fit_bp_model <- function(maxnet,
     p <- c(rep(1, nrow(present)), rep(0, nrow(background)))
     combined <- bind_rows(present, background)
     mod <- maxnet(p, combined, maxnet.formula(p, combined, classes = "lq"))
-    return(list(model = mod, t_max_det = 7))
+    return(list(model = mod, t_max_det = 7,
+                n_checklists = nrow(present), 
+                n_sightings = nrow(present)))
   } else {
     # complete checklists only
     if (complete) {
@@ -218,12 +220,20 @@ fit_bp_model <- function(maxnet,
       t_max_det <- 7
     }
     
-    return(list(model = mod, calibration = mod_cal, t_max_det = t_max_det))
+    return(list(model = mod, calibration = mod_cal, t_max_det = t_max_det,
+                n_checklists = nrow(data), 
+                n_sightings = sum(data$species_observed)))
   }
 }
 bp_runs$models <- pmap(bp_runs, fit_bp_model, data = model_data,
                        spacing = sample_spacing, regime = sample_regime)
-
+# amount of data in each run
+run_counts <- bp_runs %>% 
+  mutate(n_checklists = map_int(models, "n_checklists"),
+         n_sightings = map_int(models, "n_sightings")) %>% 
+  select(-models)
+str_glue("output/07_bad_1_rf-model_counts_{sp_code}.csv") %>% 
+  write_csv(run_counts, .)
 
 # validation ----
 
