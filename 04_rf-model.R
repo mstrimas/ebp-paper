@@ -107,6 +107,7 @@ ebird_split <- ebird_ss %>%
 stopifnot(all(complete.cases(ebird_split$test)))
 stopifnot(all(complete.cases(ebird_split$train)))
 
+
 # fit rf model ----
 
 rf <- ranger(formula =  species_observed ~ ., 
