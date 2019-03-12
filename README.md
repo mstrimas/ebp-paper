@@ -4,7 +4,7 @@
 [![License: GPL
 v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](http://www.gnu.org/licenses/gpl-3.0)
 
-This repository conducts the analysis and generates the figures for the paper *Best practices for making reliable inferences from citizen science data: case study using eBird to estimate species distributions*. To reproduce this analysis:
+This repository conducts the analysis and generates the figures for the paper *Best practices for making reliable inferences from citizen science data: case study using eBird to estimate species distributions* ([preprint available on bioRxiv](https://www.biorxiv.org/node/242503.external-links.html)). To reproduce this analysis:
 
 1. Install the latest versions of [R](https://cloud.r-project.org/) and [RStudio](https://www.rstudio.com/products/rstudio/download/#download).
 2. Request access to the [eBird Basic Dataset](https://ebird.org/data/download/ebd), then download it and the Sampling Event Data. Uncompress them and place the large text files in a central location.
