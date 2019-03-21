@@ -37,10 +37,10 @@ if (length(list.files(tif_dir, "tif$")) < 9) {
   tiles <- getTile(bcr)
   # earliest year of ebird data
   ebd_start_year <- format(min(ebd$observation_date), "%Y.01.01")
-  tifs <- runGdal(product = "MCD12Q1.006", 
+  tifs <- runGdal(product = "MCD12Q1", collection = "006", SDSstring = "01", 
                   tileH = tiles@tileH, tileV = tiles@tileV,
                   begin = ebd_start_year, end = "2016.12.31", 
-                  SDSstring = "01", job = "modis_umd_bcr27") %>% 
+                  job = "modis_umd_bcr27") %>% 
     pluck("MCD12Q1.006") %>% 
     unlist()
   # save tifs in project directory
