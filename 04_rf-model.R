@@ -91,7 +91,7 @@ ebird_ss <- hex_sample(ebird_habitat, spacing = sample_spacing,
 # test/train split ----
 
 # prepare data
-ebird_split <- ebird_habitat %>% 
+ebird_split <- ebird_ss %>% 
   # random forests requires an integer repsonse
   mutate(species_observed = as.integer(species_observed)) %>% 
   # select only the columns to be used in the model
@@ -106,6 +106,7 @@ ebird_split <- ebird_habitat %>%
 # ensure there are no rows with NAs
 stopifnot(all(complete.cases(ebird_split$test)))
 stopifnot(all(complete.cases(ebird_split$train)))
+
 
 # fit rf model ----
 

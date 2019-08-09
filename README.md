@@ -1,16 +1,16 @@
 # Best Practices for Using eBird Data
 
-[![Status](https://img.shields.io/badge/Status-in%20prep-red.svg?style=flat-square)]()
+[![Status](https://img.shields.io/badge/Status-in%20development-red.svg?style=flat-square)]()
 [![License: GPL
-v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](http://www.gnu.org/licenses/gpl-3.0)
+v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=flat-square)](http://www.gnu.org/licenses/gpl-3.0)
 
-This repository conducts the analysis and generates the figures for the paper *Best practices for making reliable inferences from citizen science data: case study using eBird to estimate species distributions*. To reproduce this analysis:
+This repository conducts the analysis and generates the figures for the paper *Best practices for making reliable inferences from citizen science data: case study using eBird to estimate species distributions* ([preprint available on bioRxiv](https://www.biorxiv.org/node/242503.external-links.html)). To reproduce this analysis:
 
 1. Install the latest versions of [R](https://cloud.r-project.org/) and [RStudio](https://www.rstudio.com/products/rstudio/download/#download).
 2. Request access to the [eBird Basic Dataset](https://ebird.org/data/download/ebd), then download it and the Sampling Event Data. Uncompress them and place the large text files in a central location.
 3. Download this repository by clicking the *Clone or download* button on the top right of this page. Unzip the repository and open the RStudio project.
 4. Download the Checklist Calibration Index (CCI) file, after filling out the waiver, and place it in the `data/` subdirectory of the R project. If you do not download this file, the code in the repository will still run, however, CCI will not be included as a predictor in the models.
-5. This project use [`packrat`](https://rstudio.github.io/packrat/) to manage package dependencies. When you first open the RStudio project, it should automatically install all the necessary packages required for this analysis. The versions of each package will be consistent with the vesions used in the original analysis. Alternatively, install the dependencies with `remotes::install_github("mstrimas/ebp-paper")`.
+5. This project use [`packrat`](https://rstudio.github.io/packrat/) to manage package dependencies. When you first open the RStudio project, it should automatically install all the necessary packages required for this analysis. The versions of each package will be consistent with the vesions used in the original analysis. Alternatively, install the dependencies with `remotes::install_github("mstrimas/ebppackages")`.
 6. Run each of the scripts in the top-level directory of the RStudio project in sequence.
 
 ## Analysis
