@@ -1,0 +1,435 @@
+
+R version 3.5.1 (2018-07-02) -- "Feather Spray"
+Copyright (C) 2018 The R Foundation for Statistical Computing
+Platform: x86_64-apple-darwin15.6.0 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> 
+> 
+> setwd("/Users/ali/Documents/REPOS/ebird-best-practices/")
+> 
+> 
+> # gam abundance models
+> 
+> library(auk)
+auk 0.3.1 is designed for EBD files downloaded after 2018-08-15. 
+EBD data directory:  /Volumes/ebird_data/EBD 
+eBird taxonomy version:  2018
+Warning message:
+In auk_get_ebd_path() : Directory specified by EBD_PATH does not exist.
+> library(sf)
+Linking to GEOS 3.6.1, GDAL 2.1.3, PROJ 4.9.3
+Warning message:
+package 'sf' was built under R version 3.5.2 
+> library(raster)
+Loading required package: sp
+Warning message:
+package 'raster' was built under R version 3.5.2 
+> library(dggridR)
+Loading required package: rgdal
+rgdal: version: 1.4-3, (SVN revision 828)
+ Geospatial Data Abstraction Library extensions to R successfully loaded
+ Loaded GDAL runtime: GDAL 2.1.3, released 2017/20/01
+ Path to GDAL shared files: /Library/Frameworks/R.framework/Versions/3.5/Resources/library/rgdal/gdal
+ GDAL binary built with GEOS: FALSE 
+ Loaded PROJ.4 runtime: Rel. 4.9.3, 15 August 2016, [PJ_VERSION: 493]
+ Path to PROJ.4 shared files: /Library/Frameworks/R.framework/Versions/3.5/Resources/library/rgdal/proj
+ Linking to sp version: 1.3-1 
+Loading required package: ggplot2
+Loading required package: dplyr
+
+Attaching package: 'dplyr'
+
+The following objects are masked from 'package:raster':
+
+    intersect, select, union
+
+The following objects are masked from 'package:stats':
+
+    filter, lag
+
+The following objects are masked from 'package:base':
+
+    intersect, setdiff, setequal, union
+
+Warning messages:
+1: package 'rgdal' was built under R version 3.5.2 
+2: package 'ggplot2' was built under R version 3.5.2 
+3: package 'dplyr' was built under R version 3.5.2 
+> library(mgcv)
+Loading required package: nlme
+
+Attaching package: 'nlme'
+
+The following object is masked from 'package:dplyr':
+
+    collapse
+
+The following object is masked from 'package:raster':
+
+    getData
+
+This is mgcv 1.8-24. For overview type 'help("mgcv-package")'.
+> library(viridis)
+Loading required package: viridisLite
+> library(fields)
+Loading required package: spam
+Loading required package: dotCall64
+Loading required package: grid
+Spam version 2.2-0 (2018-06-19) is loaded.
+Type 'help( Spam)' or 'demo( spam)' for a short introduction 
+and overview of this package.
+Help for individual functions is also obtained by adding the
+suffix '.spam' to the function name, e.g. 'help( chol.spam)'.
+
+Attaching package: 'spam'
+
+The following objects are masked from 'package:base':
+
+    backsolve, forwardsolve
+
+Loading required package: maps
+See www.image.ucar.edu/~nychka/Fields for
+ a vignette and other supplements. 
+> library(dplyr)
+> library(purrr)
+
+Attaching package: 'purrr'
+
+The following object is masked from 'package:maps':
+
+    map
+
+Warning message:
+package 'purrr' was built under R version 3.5.2 
+> library(readr)
+> library(ggplot2)
+> library(stringr)
+Warning message:
+package 'stringr' was built under R version 3.5.2 
+> library(lubridate)
+
+Attaching package: 'lubridate'
+
+The following object is masked from 'package:base':
+
+    date
+
+> library(forcats)
+Warning message:
+package 'forcats' was built under R version 3.5.2 
+> walk(list.files("R", full.names = TRUE), source)
+> # resolve namespace conflicts
+> select <- dplyr::select
+> projection <- raster::projection
+> 
+> set.seed(1)
+> # set species for analysis
+> species <- "Wood Thrush"
+> sp_code <- ebird_species(species, "code")
+> # setup spatial sampling regime
+> sample_regime <- "both"
+> sample_spacing <- 5
+> 
+> 
+> # load data ----
+> 
+> # ebird data
+> ebird <- read_csv("data/ebd_june_bcr27_zf.csv", na = "") %>% 
++   filter(species_code == sp_code,
++          !is.na(observation_count))
+Error: 'data/ebd_june_bcr27_zf.csv' does not exist in current working directory ('/Users/ali/Documents/REPOS/ebird-best-practices').
+> 
+> # modis covariates
+> habitat <- read_csv("data/modis_pland_checklists.csv", 
++                     col_types = cols(
++                       .default = col_double(),
++                       checklist_id = col_character()))
+Error: 'data/modis_pland_checklists.csv' does not exist in current working directory ('/Users/ali/Documents/REPOS/ebird-best-practices').
+> pred_surface <- read_csv("data/modis_pland_prediction-surface.csv", 
++                          col_types = cols(
++                            .default = col_double(),
++                            id = col_integer(),
++                            year = col_integer()))
+> 
+> # combine modis and ebird data
+> ebird_habitat <- inner_join(ebird, habitat, by = "checklist_id")
+Error in inner_join(ebird, habitat, by = "checklist_id") : 
+  object 'ebird' not found
+> 
+> # optional checklist calibration index
+> cci_file <- "data/cci_june_bcr27.csv"
+> if (file.exists(cci_file)) {
++   cci <- read_csv(cci_file)
++   ebird_habitat <- inner_join(ebird_habitat, cci, by = "checklist_id") %>% 
++     filter(!is.na(checklist_calibration_index))
++ }
+> 
+> 
+> 
+> 
+> 
+> setwd("/Users/ali/Documents/REPOS/ebp-paper/")
+> 
+> 
+> 
+> # ebird data
+> ebird <- read_csv("data/ebd_june_bcr27_zf.csv", na = "") %>% 
++   filter(species_code == sp_code,
++          !is.na(observation_count))
+Parsed with column specification:
+cols(
+  checklist_id = col_character(),
+  observer_id = col_character(),
+  sampling_event_identifier = col_character(),
+  species_code = col_character(),
+  observation_count = col_double(),
+  species_observed = col_logical(),
+  state_code = col_character(),
+  locality_id = col_character(),
+  latitude = col_double(),
+  longitude = col_double(),
+  protocol_type = col_character(),
+  all_species_reported = col_logical(),
+  observation_date = col_date(format = ""),
+  time_observations_started = col_double(),
+  duration_minutes = col_double(),
+  effort_distance_km = col_double(),
+  number_observers = col_double()
+)
+> 
+> # modis covariates
+> habitat <- read_csv("data/modis_pland_checklists.csv", 
++                     col_types = cols(
++                       .default = col_double(),
++                       checklist_id = col_character()))
+> pred_surface <- read_csv("data/modis_pland_prediction-surface.csv", 
++                          col_types = cols(
++                            .default = col_double(),
++                            id = col_integer(),
++                            year = col_integer()))
+|=                                                                       |   1%|=                                                                       |   2%|=                                                                       |   2%|==                                                                      |   3%|==                                                                      |   3%|===                                                                     |   4%|===                                                                     |   4%|===                                                                     |   5%|====                                                                    |   5%|====                                                                    |   6%|====                                                                    |   6%|=====                                                                   |   7%|=====                                                                   |   7%|======                                                                  |   8%|======                                                                  |   8%|======                                                          |   9%    1 MB|======                                                          |   9%    1 MB|======                                                          |  10%    1 MB|=======                                                         |  11%    1 MB|=======                                                         |  11%    1 MB|=======                                                         |  12%    1 MB|========                                                        |  12%    1 MB|========                                                        |  13%    1 MB|========                                                        |  13%    1 MB|=========                                                       |  14%    1 MB|=========                                                       |  14%    1 MB|=========                                                       |  15%    1 MB|==========                                                      |  15%    1 MB|==========                                                      |  16%    1 MB|===========                                                     |  16%    1 MB|===========                                                     |  17%    1 MB|===========                                                     |  18%    1 MB|============                                                    |  18%    2 MB|============                                                    |  19%    2 MB|============                                                    |  19%    2 MB|=============                                                   |  20%    2 MB|=============                                                   |  20%    2 MB|=============                                                   |  21%    2 MB|==============                                                  |  21%    2 MB|==============                                                  |  22%    2 MB|==============                                                  |  22%    2 MB|===============                                                 |  23%    2 MB|===============                                                 |  23%    2 MB|===============                                                 |  24%    2 MB|================                                                |  25%    2 MB|================                                                |  25%    2 MB|================                                                |  26%    2 MB|=================                                               |  26%    2 MB|=================                                               |  27%    2 MB|==================                                              |  27%    3 MB|==================                                              |  28%    3 MB|==================                                              |  28%    3 MB|===================                                             |  29%    3 MB|===================                                             |  29%    3 MB|===================                                             |  30%    3 MB|====================                                            |  30%    3 MB|====================                                            |  31%    3 MB|====================                                            |  31%    3 MB|=====================                                           |  32%    3 MB|=====================                                           |  33%    3 MB|=====================                                           |  33%    3 MB|======================                                          |  34%    3 MB|======================                                          |  34%    3 MB|======================                                          |  35%    3 MB|=======================                                         |  35%    3 MB|=======================                                         |  36%    3 MB|=======================                                         |  36%    4 MB|========================                                        |  37%    4 MB|========================                                        |  37%    4 MB|========================                                        |  38%    4 MB|=========================                                       |  38%    4 MB|=========================                                       |  39%    4 MB|=========================                                       |  39%    4 MB|==========================                                      |  40%    4 MB|==========================                                      |  40%    4 MB|==========================                                      |  41%    4 MB|===========================                                     |  41%    4 MB|===========================                                     |  42%    4 MB|===========================                                     |  42%    4 MB|============================                                    |  43%    4 MB|============================                                    |  43%    4 MB|============================                                    |  44%    4 MB|=============================                                   |  44%    4 MB|=============================                                   |  45%    4 MB|=============================                                   |  45%    5 MB|==============================                                  |  46%    5 MB|==============================                                  |  47%    5 MB|==============================                                  |  47%    5 MB|===============================                                 |  48%    5 MB|===============================                                 |  48%    5 MB|===============================                                 |  49%    5 MB|================================                                |  49%    5 MB|================================                                |  50%    5 MB|================================                                |  50%    5 MB|=================================                               |  51%    5 MB|=================================                               |  51%    5 MB|=================================                               |  52%    5 MB|==================================                              |  52%    5 MB|==================================                              |  53%    5 MB|==================================                              |  53%    5 MB|===================================                             |  54%    5 MB|===================================                             |  54%    5 MB|===================================                             |  55%    6 MB|====================================                            |  55%    6 MB|====================================                            |  56%    6 MB|====================================                            |  56%    6 MB|=====================================                           |  57%    6 MB|=====================================                           |  57%    6 MB|=====================================                           |  58%    6 MB|======================================                          |  58%    6 MB|======================================                          |  59%    6 MB|======================================                          |  59%    6 MB|=======================================                         |  60%    6 MB|=======================================                         |  60%    6 MB|=======================================                         |  61%    6 MB|========================================                        |  61%    6 MB|========================================                        |  62%    6 MB|========================================                        |  63%    6 MB|=========================================                       |  63%    6 MB|=========================================                       |  64%    7 MB|=========================================                       |  64%    7 MB|==========================================                      |  65%    7 MB|==========================================                      |  65%    7 MB|===========================================                     |  66%    7 MB|===========================================                     |  66%    7 MB|===========================================                     |  67%    7 MB|============================================                    |  67%    7 MB|============================================                    |  68%    7 MB|============================================                    |  68%    7 MB|=============================================                   |  69%    7 MB|=============================================                   |  69%    7 MB|=============================================                   |  70%    7 MB|==============================================                  |  70%    7 MB|==============================================                  |  71%    7 MB|==============================================                  |  72%    7 MB|===============================================                 |  72%    7 MB|===============================================                 |  73%    8 MB|===============================================                 |  73%    8 MB|================================================                |  74%    8 MB|================================================                |  74%    8 MB|================================================                |  75%    8 MB|=================================================               |  75%    8 MB|=================================================               |  76%    8 MB|=================================================               |  76%    8 MB|==================================================              |  77%    8 MB|==================================================              |  77%    8 MB|===================================================             |  78%    8 MB|===================================================             |  79%    8 MB|===================================================             |  79%    8 MB|====================================================            |  80%    8 MB|====================================================            |  80%    8 MB|====================================================            |  81%    8 MB|=====================================================           |  81%    8 MB|=====================================================           |  82%    8 MB|=====================================================           |  82%    9 MB|======================================================          |  83%    9 MB|======================================================          |  83%    9 MB|======================================================          |  84%    9 MB|=======================================================         |  84%    9 MB|=======================================================         |  85%    9 MB|=======================================================         |  85%    9 MB|========================================================        |  86%    9 MB|========================================================        |  86%    9 MB|========================================================        |  87%    9 MB|=========================================================       |  87%    9 MB|=========================================================       |  88%    9 MB|=========================================================       |  88%    9 MB|==========================================================      |  89%    9 MB|==========================================================      |  89%    9 MB|==========================================================      |  90%    9 MB|===========================================================     |  90%    9 MB|===========================================================     |  91%   10 MB|===========================================================     |  91%   10 MB|============================================================    |  92%   10 MB|============================================================    |  92%   10 MB|============================================================    |  93%   10 MB|=============================================================   |  93%   10 MB|=============================================================   |  94%   10 MB|=============================================================   |  94%   10 MB|==============================================================  |  95%   10 MB|==============================================================  |  95%   10 MB|==============================================================  |  96%   10 MB|=============================================================== |  96%   10 MB|=============================================================== |  97%   10 MB|=============================================================== |  97%   10 MB|================================================================|  98%   10 MB|================================================================|  99%   10 MB|================================================================|  99%   10 MB|=================================================================| 100%   10 MB
+> 
+> 
+> 
+> # combine modis and ebird data
+> ebird_habitat <- inner_join(ebird, habitat, by = "checklist_id")
+> 
+> # optional checklist calibration index
+> cci_file <- "data/cci_june_bcr27.csv"
+> if (file.exists(cci_file)) {
++   cci <- read_csv(cci_file)
++   ebird_habitat <- inner_join(ebird_habitat, cci, by = "checklist_id") %>% 
++     filter(!is.na(checklist_calibration_index))
++ }
+Parsed with column specification:
+cols(
+  checklist_id = col_character(),
+  checklist_calibration_index = col_double()
+)
+> 
+> 
+> 
+> # map data ----
+> 
+> map_proj <- st_crs(102003)
+> # borders
+> f_gpkg <- "data/gis-data.gpkg"
+> ne_land <- read_sf(f_gpkg, "ne_land") %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> ne_country_lines <- read_sf(f_gpkg, "ne_country_lines") %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> ne_state_lines <- read_sf(f_gpkg, "ne_state_lines") %>% 
++   filter(country_code == "US") %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> bcr <- read_sf(f_gpkg, "bcr") %>% 
++   filter(bcr_code == 27) %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> 
+> 
+> # spatial subsampling ----
+> 
+> ebird_ss <- hex_sample(ebird_habitat, spacing = sample_spacing,
++                        regime = sample_regime)
+Error in hex_sample(ebird_habitat, spacing = sample_spacing, regime = sample_regime) : 
+  could not find function "hex_sample"
+> 
+> 
+> walk(list.files("R", full.names = TRUE), source)
+> # resolve namespace conflicts
+> 
+> 
+> 
+> # combine modis and ebird data
+> ebird_habitat <- inner_join(ebird, habitat, by = "checklist_id")
+> 
+> # optional checklist calibration index
+> cci_file <- "data/cci_june_bcr27.csv"
+> if (file.exists(cci_file)) {
++   cci <- read_csv(cci_file)
++   ebird_habitat <- inner_join(ebird_habitat, cci, by = "checklist_id") %>% 
++     filter(!is.na(checklist_calibration_index))
++ }
+Parsed with column specification:
+cols(
+  checklist_id = col_character(),
+  checklist_calibration_index = col_double()
+)
+> 
+> 
+> # map data ----
+> 
+> map_proj <- st_crs(102003)
+> # borders
+> f_gpkg <- "data/gis-data.gpkg"
+> ne_land <- read_sf(f_gpkg, "ne_land") %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> ne_country_lines <- read_sf(f_gpkg, "ne_country_lines") %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> ne_state_lines <- read_sf(f_gpkg, "ne_state_lines") %>% 
++   filter(country_code == "US") %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> bcr <- read_sf(f_gpkg, "bcr") %>% 
++   filter(bcr_code == 27) %>% 
++   st_transform(crs = map_proj) %>% 
++   st_geometry()
+Warning message:
+In CPL_read_ogr(dsn, layer, query, as.character(options), quiet,  :
+  GDAL Message 1: GPKG: bad application_id 0x47504B47 on '/Users/ali/Documents/REPOS/ebp-paper/data/gis-data.gpkg'
+> 
+> 
+> # spatial subsampling ----
+> 
+> ebird_ss <- hex_sample(ebird_habitat, spacing = sample_spacing,
++                        regime = sample_regime)
+Resolution: 13, Area (km^2): 31.9926151554038, Spacing (km): 5.58632116604266, CLS (km): 6.38233997895802
+> 
+> 
+> 
+> 
+> 
+> sp_code
+[1] "woothr"
+> 
+> 
+> if (sp_code == "woothr") {
++   plands <- paste0("pland_", c("04", "05", "12", "13"))
++ } else if (sp_code == "norbob") {
++   plands <- paste0("pland_", c("04", "08", "09", "13"))
++ } else if (sp_code == "whiibi") {
++   plands <- paste0("pland_", c("00", "08", "09", "11"))
++ } else {
++   stop("species code not valid.")
++ }
+> 
+> 
+> 
+> 
+> ebird_split <- ebird_ss %>% 
++   mutate(day_of_year = yday(observation_date),
++          protocol_type = factor(protocol_type, 
++                                 levels = c("Stationary" , "Traveling"))) %><       levels = c("Stationary" , "Traveling"))) %>%                        
++   # select only the columns to be used in the model
++   select(observation_count,
++          day_of_year, time_observations_started, duration_minutes,
++          effort_distance_km, number_observers, protocol_type,
++          contains("checklist_calibration_index"),
++          one_of(plands)) %>% 
++   # test/train split, 80/20
++   split(if_else(runif(nrow(.)) <= 0.8, "train", "test"))
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> # fit gam models ----
+> 
+> # gam parameters
+> # degrees of freedom for smoothing
+> k <- 5
+> # degrees of freedom for cyclic time of day smooth
+> k_time <- 7 
+> 
+> # continuous predictors
+> # hold out time to treat seperately since it's cyclic
+> continuous_covs <- ebird_split$train %>% 
++   select(-observation_count, -protocol_type, -time_observations_started) %><nt, -protocol_type, -time_observations_started) %>%                         
++   names()
+> 
+> 
+> 
+> 
+> 
+> # create model formula for predictors
+> gam_formula_rhs <- str_glue("s({var}, k = {k})", 
++                             var = continuous_covs, k = k) %>% 
++   str_flatten(collapse = " + ") %>% 
++   str_glue(" ~ ", .,
++            " + protocol_type + ",
++            "s(time_observations_started, bs = \"cc\", k = {k})", 
++            k = k_time) %>% 
++   as.formula()
+> 
+> 
+> 
+> 
+> gam_formula_rhs
+~s(day_of_year, k = 5) + s(duration_minutes, k = 5) + s(effort_distance_km, 
+    k = 5) + s(number_observers, k = 5) + s(checklist_calibration_index, 
+    k = 5) + s(pland_04, k = 5) + s(pland_05, k = 5) + s(pland_12, 
+    k = 5) + s(pland_13, k = 5) + protocol_type + s(time_observations_started, 
+    bs = "cc", k = 7)
+<environment: 0x7fe4668ded98>
+> 
+> 
+> # model formula including response
+> gam_formula <- update.formula(observation_count ~ ., gam_formula_rhs)
+> 
+> 
+> 
+> 
+> 
