@@ -23,10 +23,20 @@ lc_classes <- read_csv("data/modis_umd_classes.csv")
 # bcr 27 boundary
 bcr <- read_sf("data/gis-data.gpkg", "bcr") %>% 
   filter(bcr_code == 27)
+
+# folder to save training and validation datasets
+data_folder <- "data/"
+
+# name of data extraction
+data_tag <- "mayjune_201718_bcr27"
+
+
 # ebird data
-ebd <- read_csv("data/ebd_june_bcr27_zf.csv", na = "")
+ebd <- read_csv(paste0(data_folder, "data_4_models_", data_tag, ".csv"))
+
 # bad ebird data
-ebd_bad <- read_csv("data/ebd_june_bcr27_bad_zf.csv", na = "")
+ebd_bad <- read_csv(paste0(data_folder, "data_bad_4_models_", data_tag, ".csv"))
+
 
 
 # modis data ----
@@ -39,7 +49,7 @@ if (length(list.files(tif_dir, "tif$")) < 9) {
   ebd_start_year <- format(min(ebd$observation_date), "%Y.01.01")
   tifs <- runGdal(product = "MCD12Q1", collection = "006", SDSstring = "01", 
                   tileH = tiles@tileH, tileV = tiles@tileV,
-                  begin = ebd_start_year, end = "2016.12.31", 
+                  begin = ebd_start_year, end = "2018.12.31", 
                   job = "modis_umd_bcr27") %>% 
     pluck("MCD12Q1.006") %>% 
     unlist()
@@ -54,6 +64,7 @@ if (length(list.files(tif_dir, "tif$")) < 9) {
     file.copy(tifs[i], f)
   }
 }
+
 # load annaul landcover layers
 f_tifs <- list.files(tif_dir, "^modis_umd", full.names = TRUE)
 layer_year <- str_extract(f_tifs, "(?<=modis_umd_)[0-9]{4}") %>% 
@@ -112,7 +123,7 @@ pland <- complete(pland,
   # transform to wide format
   spread(landcover, pland)
 # save
-write_csv(pland, "data/modis_pland_loc-year.csv")
+write_csv(pland, paste0(data_folder, "modis_pland_loc-year_", data_tag, ".csv"))
 
 # attach back to ebd data by year and location
 ebd_pland <- bind_rows(ebd, ebd_bad) %>% 
@@ -124,7 +135,7 @@ ebd_pland <- bind_rows(ebd, ebd_bad) %>%
   select(checklist_id, locality_id, year) %>% 
   inner_join(pland, by = c("locality_id", "year")) %>% 
   select(-locality_id, -year)
-write_csv(ebd_pland, "data/modis_pland_checklists.csv")
+write_csv(ebd_pland, paste0(data_folder, "modis_pland_checklists_", data_tag, ".csv"))
 
 
 # prediction surface ----
@@ -135,7 +146,7 @@ r <- raster(landcover) %>%
   aggregate(agg_factor) %>% 
   fasterize(st_transform(bcr, crs = projection(.)), .) %>% 
   trim() %>% 
-  writeRaster(filename = str_glue("data/modis_{agg_factor}xagg.tif"), 
+  writeRaster(filename = str_glue(data_folder, "modis_{agg_factor}xagg.tif"), 
               overwrite = TRUE)
 # extract cell centers and buffer
 r_centers <- rasterToPoints(r, spatial = TRUE) %>% 
@@ -155,7 +166,8 @@ pland <- landcover_buffer_curr %>%
   group_by(id) %>% 
   mutate(pland = n / sum(n)) %>% 
   ungroup() %>% 
-  select(-n)
+  select(-n) %>%
+  filter(!is.na(landcover))
 pland_wide <- pland %>% 
   # fill in implicit missing values with 0s
   complete(id, landcover = lc_classes$class, fill = list(pland = 0)) %>% 
@@ -172,4 +184,4 @@ pland_coords <- st_transform(r_centers, crs = 4326) %>%
   rename(longitude = X, latitude = Y) %>% 
   inner_join(pland_wide, by = "id")
 # save
-write_csv(pland_coords, "data/modis_pland_prediction-surface.csv")
+write_csv(pland_coords, paste0(data_folder, "modis_pland_prediction-surface.csv"))

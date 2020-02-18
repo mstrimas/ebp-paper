@@ -18,24 +18,40 @@ library(lubridate)
 select <- dplyr::select
 projection <- raster::projection
 
+# read in functions
+walk(list.files("R", full.names = TRUE), source)
+
 set.seed(1)
 # set species for analysis
 species <- "Wood Thrush"
 sp_code <- ebird_species(species, "code")
+
 # setup spatial sampling regime
 sample_spacing <- 5
 
+# set paths ----
+figure_folder <- "figures/"
+output_folder <- "output/"
+
+
 # load data ----
+data_folder <- "data/"
+data_tag <- "mayjune_201718_bcr27"
+
 
 # ebird data
-ebird <- read_csv("data/ebd_june_bcr27_zf.csv", na = "") %>% 
-  filter(species_code == sp_code,
-         number_observers <= 5) %>% 
-  mutate(species_observed = as.integer(species_observed),
-         day_of_month = day(observation_date))
+ebird <- read_csv(paste0(data_folder, "data_4_models_", data_tag, ".csv"), na = "") 
+species_count <- ebird[,which(colnames(ebird)==sp_code)] %>%
+                  as.matrix() %>% as.vector() %>% as.numeric()
+species_binary <- ifelse(is.na(species_count), 1, ifelse(species_count==0, 0, 1))
+ebird$species_observed <- species_binary
+ebird <- ebird %>%
+        select(checklist_id, sampling_event_identifier, observer_id, species_observed, latitude, longitude,
+                protocol_type, all_species_reported, observation_date, time_observations_started,
+                duration_minutes, effort_distance_km, number_observers, type)
 
 # modis covariates
-habitat <- read_csv("data/modis_pland_checklists.csv", 
+habitat <- read_csv(paste0(data_folder, "modis_pland_checklists_", data_tag, ".csv"), 
                     col_types = cols(
                       .default = col_double(),
                       checklist_id = col_character()))
@@ -49,13 +65,20 @@ pred_surface <- read_csv("data/modis_pland_prediction-surface.csv",
 ebird_habitat <- inner_join(ebird, habitat, by = "checklist_id")
 
 # optional checklist calibration index
-cci_file <- "data/cci_june_bcr27.csv"
+cci_file <- paste0("data/cci_", data_tag, ".csv")
 if (file.exists(cci_file)) {
   cci <- read_csv(cci_file)
   ebird_habitat <- inner_join(ebird_habitat, cci, by = "checklist_id") %>% 
     filter(!is.na(checklist_calibration_index))
+  figure_folder <- paste0(figure_folder, "with_cci/occupancy/")
+  output_folder <- paste0(output_folder, "with_cci/occupancy/")
+} else {
+  figure_folder <- paste0(figure_folder, "without_cci/occupancy/")
+  output_folder <- paste0(output_folder, "without_cci/occupancy/")  
 }
 
+dir.create(figure_folder, recursive = TRUE)
+dir.create(output_folder, recursive = TRUE)
 
 # map data ----
 
@@ -77,15 +100,70 @@ bcr <- read_sf(f_gpkg, "bcr") %>%
   st_transform(crs = map_proj) %>% 
   st_geometry()
 
+# formatting data columns
+ebird_habitat <- ebird_habitat %>%
+        mutate(protocol_traveling = ifelse(protocol_type == "Traveling", 1, 0)) %>%
+        mutate(time_observations_started = as.numeric(as.character(time_observations_started))) %>%
+        mutate(number_observers = as.numeric(as.character(number_observers))) %>%
+        mutate(duration_minutes = as.numeric(as.character(duration_minutes))) %>%
+        mutate(day_of_year = yday(observation_date))
+
+
+# assign observations to hexagonal grid with cell size ~ 5 km 
+dggs <- dgconstruct(spacing = sample_spacing)
+ebird_habitat_cell <- ebird_habitat %>% 
+  mutate(cell = dgGEO_to_SEQNUM(dggs, longitude, latitude)$seqnum) %>%
+  mutate(locality_id = paste(round(longitude, 7), round(latitude, 7), sep="_"))
+#  mutate(locality_id = cell)
+
+cell_lat_lon <- ebird_habitat_cell %>%
+                filter(type == "train") %>%
+                select(cell, latitude, longitude, starts_with("pland_")) %>%
+                group_by(cell) %>%
+                summarise_all(median) %>%
+                ungroup()
+
+# ebird_habitat_cell <- ebird_habitat_cell %>%
+#                 select(-latitude, -longitude, -starts_with("pland_")) %>%
+#                 left_join(cell_lat_lon)
 
 # prepare for unmarked ----
 
 # require a minimum of 2 observations per site (location-observers combination)
 # period of closure = june of each year
-occ <- filter_repeat_visits(ebird_habitat, min_obs = 2, max_obs = 10,
+occ <- ebird_habitat_cell %>%
+        filter(type == "train") %>%
+        filter_repeat_visits(min_obs = 2, max_obs = 10,
                             annual_closure = TRUE,
                             date_var = "observation_date",
-                            site_vars = c("locality_id", "observer_id"))
+                            site_vars = c("locality_id")) # , "observer_id"))
+
+occ_test_2017 <- ebird_habitat_cell %>%
+        filter(type == "test_2017") %>%
+        filter_repeat_visits(min_obs = 2, max_obs = 10,
+                            annual_closure = TRUE,
+                            date_var = "observation_date",
+                            site_vars = c("locality_id")) #, "observer_id"))
+
+occ_test_bbs <- ebird_habitat_cell %>%
+        filter(type == "test_bbs") %>%
+        filter_repeat_visits(min_obs = 2, max_obs = 10,
+                            annual_closure = TRUE,
+                            date_var = "observation_date",
+                            site_vars = c("locality_id")) #, "observer_id"))
+
+
+nrow(ebird_habitat_cell)
+# 35446
+
+nrow(occ)
+# 8378  # lat, lon, observer
+# 8659  # lat, lon
+
+length(table(occ$locality_id))
+# 2115  # lat, lon, observer
+# 2300  # lat, lon
+
 
 # convert to a wide format for use with unmarked
 # include all detection covariates
@@ -108,7 +186,7 @@ if (sp_code == "woothr") {
 } else {
   stop("species code not valid.")
 }
-o_covs <- c("day_of_month",
+o_covs <- c("day_of_year",
             "time_observations_started", 
             "duration_minutes", 
             "effort_distance_km", 
@@ -121,23 +199,31 @@ occ_wide <- format_unmarked_occu(occ, site_id = "site",
                                  site_covs = c("n_observations", 
                                                "latitude", 
                                                "longitude",
+                                               "cell",
                                                # habitat covariates
                                                plands),
                                  obs_covs = o_covs)
 
 
 # spatial subsampling ----
-
-# generate hexagonal grid with cell size ~ 5 km 
-dggs <- dgconstruct(spacing = sample_spacing)
-occ_wide_cell <- occ_wide %>% 
-  mutate(cell = dgGEO_to_SEQNUM(dggs, longitude, latitude)$seqnum)
 # sample one record (set of repeated observations at a site) per grid cell
-occ_sss <- occ_wide_cell %>% 
+
+seed <- 1
+set.seed(seed)
+occ_sss <- occ_wide %>% 
+  sample_frac(0.75) %>%
   group_by(cell) %>% 
   sample_n(size = 1) %>% 
   ungroup() %>% 
   select(-cell)
+
+# number of 'sites'
+nrow(occ_sss)
+# 1571  # lat, lon, observer
+
+# average number of visits per 'site'
+10 - round(mean(is.na(occ_sss[,paste0("y.", 1:10)])),2)*10
+# 3.2  # lat, lon, observer
 
 
 # fit model ----
@@ -165,20 +251,20 @@ occ_model <- occu(model_formula, data = occ_um)
 
 # model assessment and selection ----
 
-occ_gof <- mb.gof.test(occ_model, nsim = 10, plot.hist = FALSE)
-str_glue("output/05_occupancy-model_gof_{sp_code}.rds") %>% 
-  saveRDS(occ_gof, .)
+# occ_gof <- mb.gof.test(occ_model, nsim = 10, plot.hist = FALSE)
+# str_glue("output/05_occupancy-model_gof_{sp_code}.rds") %>% 
+#   saveRDS(occ_gof, .)
 
 
 # model selection ----
 
-# try all possible permutations of the detection covariates
-# det_terms <- getAllTerms(occ_model) %>% 
-#   keep(str_detect, pattern = "^p\\(")
-# occ_dredge <- dredge(occ_model, fixed = det_terms)
+# try all possible permutations of the occupancy covariates
+det_terms <- getAllTerms(occ_model) %>% 
+  keep(str_detect, pattern = "^p\\(")
+occ_dredge <- dredge(occ_model, fixed = det_terms)
 # alternatively, dredge on all covariates
 # later prediction step will take many hours
-occ_dredge <- dredge(occ_model)
+# occ_dredge <- dredge(occ_model)
 
 # subset to those with the most suport for model averaging
 occ_dredge_95 <- get.models(occ_dredge, subset = cumsum(weight) <= 0.95)
@@ -216,9 +302,9 @@ r_pred <- occ_pred %>%
   rasterize(r)
 r_pred <- r_pred[[-1]]
 
-str_glue("output/05_occupancy-model_pred-occ_{sp_code}.tif") %>% 
+str_glue("output/05_occupancy-model_pred-occ_{sp_code}_seed{seed}.tif") %>% 
   writeRaster(r_pred[["occ_prob"]], ., overwrite = TRUE)
-str_glue("output/05_occupancy-model_pred-se_{sp_code}.tif") %>% 
+str_glue("output/05_occupancy-model_pred-se_{sp_code}_seed{seed}.tif") %>% 
   writeRaster(r_pred[["occ_se"]], ., overwrite = TRUE)
 
 
@@ -227,7 +313,7 @@ str_glue("output/05_occupancy-model_pred-se_{sp_code}.tif") %>%
 r_pred_proj <- projectRaster(r_pred[["occ_prob"]], crs = map_proj$proj4string, 
                              method = "ngb")
 
-str_glue("figures/05_occupancy-model_predictions_{sp_code}.png") %>% 
+str_glue("figures/05_occupancy-model_predictions_{sp_code}_seed{seed}.png") %>% 
   png(width = 2400, height = 1800, res = 300)
 par(mar = c(4, 0.5, 0.5, 0.5))
 
@@ -270,10 +356,123 @@ image.plot(zlim = range(brks), legend.only = TRUE, col = pal,
 dev.off()
 
 
+
+# predict on test data ----
+
+# predicting on a model vs a model average returns different results
+occ_pred_test_bbs <- predict(occ_avg,
+                    newdata = as.data.frame(occ_test_bbs),
+                    type = "state")
+if (inherits(occ_pred_test_bbs, "data.frame")) {
+  occ_pred_test_bbs <- occ_pred_test_bbs %>% 
+    select(occ_prob = Predicted, occ_se = SE) %>% 
+    bind_cols(occ_test_bbs, .)
+} else {
+  occ_pred_test_bbs <- as.data.frame(occ_pred_test_bbs) %>% 
+    select(occ_prob = fit, occ_se = se.fit) %>% 
+    bind_cols(occ_test_bbs, .)
+}
+
+# predicting detectability
+occ_test_bbs$protocol_type <- factor(occ_test_bbs$protocol_type, levels=c("Stationary", "Traveling"))
+
+occ_pred_test_bbs_det <- predict(occ_avg,
+                    newdata = as.data.frame(occ_test_bbs),
+                    type = "det")
+if (inherits(occ_pred_test_bbs_det, "data.frame")) {
+  occ_pred_test_bbs_det <- occ_pred_test_bbs_det %>% 
+    select(det_prob = Predicted, det_se = SE) %>% 
+    bind_cols(occ_pred_test_bbs, .)
+} else {
+  occ_pred_test_bbs_det <- as.data.frame(occ_pred_test_bbs_det) %>% 
+    select(det_prob = fit, det_se = se.fit) %>% 
+    bind_cols(occ_pred_test_bbs, .)
+}
+
+occ_pred_test_bbs_det$pred_reporting <- occ_pred_test_bbs_det$occ_prob * occ_pred_test_bbs_det$det_prob
+
+str_glue("output/05_occupancy-model_pred-occ_{sp_code}_seed{seed}.tif") %>% 
+  writeRaster(r_pred[["occ_prob"]], ., overwrite = TRUE)
+str_glue("output/05_occupancy-model_pred-se_{sp_code}_seed{seed}.tif") %>% 
+  writeRaster(r_pred[["occ_se"]], ., overwrite = TRUE)
+
+
+compare_df <- occ_pred_test_bbs_det %>%
+  mutate(id = 1:nrow(occ_pred_test_bbs_det), obs = species_observed, pred = pred_reporting) %>%
+  select(obs, pred, occ_prob, observer_id, observation_date) %>%
+  group_by(observer_id, observation_date) %>%
+  summarise(obs = mean(obs), pred = mean(pred), occ_prob = mean(occ_prob), count = n()) %>%
+  ungroup() %>%
+  filter(count>20)
+
+# visualise model fit
+plot(compare_df$pred, compare_df$obs, xlim=c(0, 1), ylim=c(0, 1)); abline(0, 1, col = "grey")
+plot(compare_df$occ_prob, compare_df$obs, xlim=c(0, 1), ylim=c(0, 1)); abline(0, 1, col = "grey")
+
+
+
+
+# predict on test data from 2017----
+
+# predicting on a model vs a model average returns different results
+occ_pred_test_2017 <- predict(occ_avg,
+                    newdata = as.data.frame(occ_test_2017),
+                    type = "state")
+if (inherits(occ_pred_test_2017, "data.frame")) {
+  occ_pred_test_2017 <- occ_pred_test_2017 %>% 
+    select(occ_prob = Predicted, occ_se = SE) %>% 
+    bind_cols(occ_test_2017, .)
+} else {
+  occ_pred_test_2017 <- as.data.frame(occ_pred_test_2017) %>% 
+    select(occ_prob = fit, occ_se = se.fit) %>% 
+    bind_cols(occ_test_2017, .)
+}
+
+
+occ_pred_test_2017_det <- predict(occ_avg,
+                    newdata = as.data.frame(occ_test_2017),
+                    type = "det")
+if (inherits(occ_pred_test_2017_det, "data.frame")) {
+  occ_pred_test_2017_det <- occ_pred_test_2017_det %>% 
+    select(det_prob = Predicted, det_se = SE) %>% 
+    bind_cols(occ_pred_test_2017, .)
+} else {
+  occ_pred_test_2017_det <- as.data.frame(occ_pred_test_2017_det) %>% 
+    select(det_prob = fit, det_se = se.fit) %>% 
+    bind_cols(occ_pred_test_2017, .)
+}
+
+occ_pred_test_2017_det$pred_reporting <- occ_pred_test_2017_det$occ_prob * occ_pred_test_2017_det$det_prob
+
+str_glue("output/05_occupancy-model_pred-test_2017_{sp_code}_seed{seed}.tif") %>% 
+  writeRaster(occ_pred_test_2017[["occ_prob"]], ., overwrite = TRUE)
+str_glue("output/05_occupancy-model_pred-test_2017_se_{sp_code}_seed{seed}.tif") %>% 
+  writeRaster(occ_pred_test_2017[["occ_se"]], ., overwrite = TRUE)
+
+
+compare_df <- occ_pred_test_2017_det %>%
+  mutate(id = 1:nrow(occ_pred_test_2017_det), obs = species_observed, pred = pred_reporting) %>%
+  select(obs, pred, occ_prob, cell) %>%
+  group_by(cell) %>%
+  summarise(obs = mean(obs), pred = mean(pred), occ_prob = mean(occ_prob), count = n()) %>%
+  ungroup() %>%
+  filter(count>10)
+
+# visualise model fit
+plot(compare_df$pred, compare_df$obs, xlim=c(0, 1), ylim=c(0, 1)); abline(0, 1, col = "grey")
+plot(compare_df$occ_prob, compare_df$obs, xlim=c(0, 1), ylim=c(0, 1)); abline(0, 1, col = "grey")
+
+g <- ggplot(data = compare_df, aes(x = pred, y = obs)) + geom_point() + 
+  gg_theme()
+
+
+
+
+
 # occupancy vs encounter rate ----
 
 r_comp <- c("output/04_rf-model_predictions_{sp_code}.tif",
-            "output/05_occupancy-model_pred-occ_{sp_code}.tif") %>% 
+            "output/05_occupancy-model_pred-occ_{sp_code}_seed{seed}.tif") %>% 
   map_chr(str_glue) %>% 
   stack() %>% 
   projectRaster(crs = map_proj$proj4string, method = "ngb") %>% 

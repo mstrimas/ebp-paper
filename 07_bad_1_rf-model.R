@@ -22,32 +22,53 @@ library(readr)
 library(stringr)
 library(lubridate)
 library(forcats)
-walk(list.files("R", full.names = TRUE), source)
 # resolve namespace conflicts
 select <- dplyr::select
 projection <- raster::projection
+
+# read in functions
+walk(list.files("R", full.names = TRUE), source)
 
 set.seed(1)
 # set species for analysis
 species <- "Wood Thrush"
 sp_code <- ebird_species(species, "code")
 # setup spatial sampling regime
-sample_regime <- "both"
+sample_regime <- "together"
 sample_spacing <- 5
+calibrate <- TRUE
 
+# --------------------------------------------------------------------
+# set paths
+figure_folder <- "figures/"
+output_folder <- "output/"
+
+
+date <- Sys.Date()
+run_name <- paste0("ss_together_rf_balanced_val_both_", date)
 
 # load data ----
 
+data_folder <- "data/"
+data_tag <- "mayjune_201718_bcr27"
+
 # ebird data
-ebird <- read_csv("data/ebd_june_bcr27_bad_zf.csv", na = "") %>% 
-  filter(species_code == sp_code) %>% 
-  mutate(species_observed = as.integer(species_observed))
+ebird <- read_csv(paste0(data_folder, "data_bad_4_models_", data_tag, ".csv"), na = "") 
+species_count <- ebird[,which(colnames(ebird)==sp_code)] %>%
+                  as.matrix() %>% as.vector() %>% as.numeric()
+species_binary <- ifelse(is.na(species_count), 1, ifelse(species_count==0, 0, 1))
+ebird$species_observed <- species_binary
+ebird <- ebird %>%
+        select(checklist_id, sampling_event_identifier, species_observed, latitude, longitude,
+                protocol_type, all_species_reported, observation_date, time_observations_started,
+                duration_minutes, effort_distance_km, number_observers, type)
 
 # modis covariates
-habitat <- read_csv("data/modis_pland_checklists.csv", 
+habitat <- read_csv(paste0(data_folder, "modis_pland_checklists_", data_tag, ".csv"), 
                     col_types = cols(
                       .default = col_double(),
                       checklist_id = col_character()))
+
 pred_surface <- read_csv("data/modis_pland_prediction-surface.csv", 
                          col_types = cols(
                            .default = col_double(),
@@ -58,11 +79,19 @@ pred_surface <- read_csv("data/modis_pland_prediction-surface.csv",
 ebird_habitat <- inner_join(ebird, habitat, by = "checklist_id")
 
 # optional checklist calibration index
-cci_file <- "data/cci_june_bcr27.csv"
+cci_file <- paste0("data/cci_", data_tag, ".csv")
 if (file.exists(cci_file)) {
   cci <- read_csv(cci_file)
   ebird_habitat <- left_join(ebird_habitat, cci, by = "checklist_id")
+  figure_folder <- paste0(figure_folder, "with_cci/encounter/", run_name, "/")
+  output_folder <- paste0(output_folder, "with_cci/encounter/", run_name, "/")
+} else {
+  figure_folder <- paste0(figure_folder, "without_cci/encounter/", run_name, "/")
+  output_folder <- paste0(output_folder, "without_cci/encounter/", run_name, "/")  
 }
+
+dir.create(figure_folder, recursive = TRUE)
+dir.create(output_folder, recursive = TRUE)
 
 
 # map data ----
@@ -86,25 +115,53 @@ bcr <- read_sf(f_gpkg, "bcr") %>%
   st_geometry()
 
 
+
+# spatial subsampling for train and test_2017 ----
+set.seed(1)
+
+# standardized test dataset for all models
+test_bbs_id <- ebird_habitat %>%
+  filter(type == "test_bbs") %>%
+  select(checklist_id, sampling_event_identifier, type) %>%
+  mutate(selected = 1)
+
+test_2017_id <- ebird_habitat %>%
+  filter(type == "test_2017") %>%
+  filter(all_species_reported) %>%
+  drop_na() %>%
+  mutate(week = lubridate::week(observation_date)) %>%
+  hex_sample(spacing = sample_spacing,
+                       regime = "both", byvar = "week") %>%
+  select(checklist_id, sampling_event_identifier, type) %>%
+  mutate(selected = 1)
+
+train_2018_id <- ebird_habitat %>%
+  filter(type == "train") %>% 
+  mutate(week = lubridate::week(observation_date)) %>%
+  hex_sample(spacing = sample_spacing, regime = sample_regime, byvar = "week") %>%
+  select(checklist_id, sampling_event_identifier, type) %>%
+  mutate(selected = 1)
+
+ebird_ss <- rbind(test_bbs_id, test_2017_id, train_2018_id) %>%
+        right_join(ebird_habitat) %>%
+        mutate(selected = ifelse(is.na(selected), 0, selected)) %>%
+        mutate(protocol_traveling = ifelse(protocol_type == "Traveling", 1, 0)) %>%
+        mutate(time_observations_started = as.numeric(as.character(time_observations_started))) %>%
+        mutate(number_observers = as.numeric(as.character(number_observers))) %>%
+        mutate(day_of_year = yday(observation_date))
+
+
 # test dataset ----
 
 # standardized test dataset for all models
-ebird_test <- ebird_habitat %>%
-  filter(all_species_reported,
-         protocol_type %in% c("Stationary", "Traveling"),
-         effort_distance_km <= 5,
-         duration_minutes <= 5 * 60,
-         number_observers <= 10)
+ebird_test_bbs <- ebird_ss %>%
+  filter(type == "test_bbs")
 
-# spatial subsampling
-test_data_ss <- hex_sample(ebird_test, spacing = sample_spacing,
-                           regime = sample_regime)
+ebird_test_2017 <- ebird_ss %>%
+  filter(type == "test_2017", selected == 1)
 
-# take a 20% testing dataset
-test_data <- sample_frac(test_data_ss, 0.2)
-
-# remove these checklists from training data
-model_data <- filter(ebird_habitat, !checklist_id %in% test_data$checklist_id)
+# define the training data
+model_data <- filter(ebird_ss, type == "train")
 
 
 # setup bad practice combinations ----
@@ -122,228 +179,96 @@ bp_runs <- tibble(run_name = c("maxent", "bad_practice", "complete",
 
 
 # fit bad practice model ----
-
-fit_bp_model <- function(maxnet, 
-                         complete, spatial_subsample, 
-                         effort_filter, effort_covs,
-                         data,
-                         spacing, regime, ...) {
-  if (maxnet) {
-    present <- data %>%
-      filter(as.logical(species_observed)) %>%
-      select(starts_with("pland"))
-    # randomly select background points
-    bg_n <- 10000
-    background <- pred_surface %>%
-      sample_n(size = bg_n, replace = FALSE) %>%
-      select(starts_with("pland"))
-    p <- c(rep(1, nrow(present)), rep(0, nrow(background)))
-    combined <- bind_rows(present, background)
-    mod <- maxnet(p, combined, maxnet.formula(p, combined, classes = "lq"))
-    return(list(model = mod, t_max_det = 7,
-                n_checklists = nrow(present), 
-                n_sightings = nrow(present)))
-  } else {
-    # complete checklists only
-    if (complete) {
-      data <- filter(data, as.logical(all_species_reported))
-    }
-    # filter on effort covariates
-    if (effort_filter){
-      data <- data %>%
-        filter(protocol_type %in% c("Stationary", "Traveling"),
-               effort_distance_km <= 5,
-               duration_minutes <= 5 * 60,
-               number_observers <= 10)
-    }
-    # spatial subsample
-    if (spatial_subsample) {
-      data <- hex_sample(data, spacing = spacing, regime = regime)
-    }
-    
-    # select covariates
-    if (effort_covs) {
-      data <- data %>% 
-        mutate(protocol_type = factor(protocol_type, 
-                                      levels = c("Stationary" , 
-                                                 "Traveling"))) %>% 
-        select(species_observed,
-               observation_date, 
-               time_observations_started, duration_minutes,
-               effort_distance_km, number_observers, protocol_type,
-               contains("checklist_calibration_index"),
-               starts_with("pland_"))
-      
-      # ensure there are no rows with NAs
-      stopifnot(all(complete.cases(data)))
-    } else {
-      data <- select(data, species_observed, starts_with("pland_"))
-      
-      # ensure there are no rows with NAs
-      stopifnot(all(complete.cases(data)))
-    }
-    
-    # fit model
-    mod <- ranger(formula =  species_observed ~ ., 
-                  num.trees = 1000, mtry = sqrt(ncol(data) - 1),
-                  importance = "impurity",
-                  data = data)
-    
-    # calibrate
-    mod_pred_train <- predict(mod, data = data, type = "response")
-    mod_pred_train <- data.frame(id = nrow(data),
-                                 obs = data$species_observed,
-                                 pred = mod_pred_train$predictions) %>% 
-      drop_na()
-    mod_cal <- scam(obs ~ s(pred, k = 5, bs = "mpi"), 
-                    data = mod_pred_train, 
-                    family = binomial)
-    
-    # maximum time of day for detection
-    if (effort_covs) {
-      pred_t <- partial_dependence(mod, vars = "time_observations_started", 
-                                   n = c(24 * 6, nrow(data)), data = data) 
-      
-      # hours with at least 1% of checklists
-      search_hours <- data %>%
-        mutate(hour = floor(time_observations_started)) %>%
-        count(hour) %>%
-        mutate(pct = n / sum(n)) %>%
-        filter(pct >= 0.01)
-      
-      # constrained peak time
-      t_max_det <- pred_t %>%
-        filter(floor(time_observations_started) %in% search_hours$hour) %>%
-        top_n(1, wt = species_observed) %>%
-        pull(time_observations_started)
-    } else {
-      t_max_det <- 7
-    }
-    
-    return(list(model = mod, calibration = mod_cal, t_max_det = t_max_det,
-                n_checklists = nrow(data), 
-                n_sightings = sum(data$species_observed)))
-  }
-}
 bp_runs$models <- pmap(bp_runs, fit_bp_model, data = model_data,
-                       spacing = sample_spacing, regime = sample_regime)
+                       spacing = sample_spacing, regime = sample_regime, 
+                       calibrate = calibrate)
+
 # amount of data in each run
 run_counts <- bp_runs %>% 
-  mutate(n_checklists = map_int(models, "n_checklists"),
-         n_sightings = map_int(models, "n_sightings")) %>% 
+  mutate(n_checklists = unlist(map(models, "n_checklists")),
+         n_sightings = unlist(map(models, "n_sightings"))) %>% 
   select(-models)
-str_glue("output/07_bad_1_rf-model_counts_{sp_code}.csv") %>% 
+str_glue("{output_folder}/07_bad_1_rf-model_counts_{sp_code}.csv") %>% 
   write_csv(run_counts, .)
 
+
+# ####################################################################
 # validation ----
-
-validate <- function(model, data) {
-  # predict on test data set
-  if (inherits(model$model, "maxnet")) {
-    # predict on standardised fixed test dataset
-    pred <- predict(model$model, newdata = data, 
-                    type = "logistic", clamp = FALSE)
-    pred <- data.frame(id = nrow(data), 
-                       obs = data$species_observed,
-                       pred = pred)
-  } else {
-    pred_rf <- predict(model$model, data = data, type = "response")
-    pred_cal <- predict(model$calibration, 
-                        newdata = data.frame(pred = pred_rf$predictions), 
-                        type = "response")
-    pred <- data.frame(id = nrow(data),
-                       obs = data$species_observed,
-                       pred = pred_cal)
-  }
-  pred <- drop_na(pred)
-  
-  # validation metrics
-  # mean squared error (mse)
-  mse <- mean((pred$obs - pred$pred)^2, na.rm = TRUE)
-  # pick threshold to maximize kappa
-  thresh <- optimal.thresholds(pred, opt.methods = "MaxKappa")[1, 2]
-  # calculate accuracy metrics: auc, kappa, sensitivity, specificity, brier
-  pa_metrics <- presence.absence.accuracy(pred, threshold = thresh, 
-                                          na.rm = TRUE, st.dev = FALSE)
-  
-  # summarise the performance of this model
-  tibble(mse = round(mse, 5),
-         auc = round(pa_metrics$AUC, 5),
-         # threshold required
-         threshold = round(thresh, 5),
-         kappa = round(pa_metrics$Kappa, 5), 
-         sensitivity = round(pa_metrics$sensitivity, 5),
-         specificity = round(pa_metrics$specificity, 5)
-  )
-}
-bp_runs <- mutate(bp_runs, ppms = map(models, validate, data = test_data))
-ppm <- bp_runs %>% 
+bp_runs_bbs <- mutate(bp_runs, ppms = map(models, validate, data = ebird_test_bbs))
+ppm_bbs <- bp_runs_bbs %>% 
   select(-models) %>% 
-  unnest()
-str_glue("output/07_bad_1_rf-model_assessment_{sp_code}.csv") %>% 
-  write_csv(ppm, .)
+  unnest(cols = c(ppms))
+str_glue("{output_folder}/07_bad_1_rf-model_assessment_test_bbs_{sp_code}_{date}.csv") %>% 
+  write_csv(ppm_bbs, .)
 
-# plot comparing ppms
-ppm_plot <- ppm %>% 
-  select_if(~ !is.logical(.)) %>% 
-  gather("metric", "value", -run_id, -run_name) %>%
-  filter(metric != "threshold") %>% 
-  arrange(run_id) %>% 
-  mutate(metric = factor(metric, 
-                         levels = c("mse", "auc",
-                                    "kappa", "sensitivity", "specificity"),
-                         labels = c("Mean Squared Error (MSE)", "AUC",
-                                    "Kappa", "Sensitivity", "Specificity")),
-         run = if_else(run_id == 6, "Best practice", paste("Model", run_id)),
-         run = as_factor(run),
-         start = if_else(metric == "AUC", 0.5, 0))
-g_ppm <- ggplot(ppm_plot) +
-  aes(x = run, y = value) +
-  geom_point() +
-  geom_point(aes(y = start), color = "transparent") +
-  facet_wrap(~ metric, nrow = 2, scales = "free_y") +
-  scale_y_continuous(expand = expand_scale(mult = c(0, 0.2))) +
-  labs(x = NULL, y = NULL) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1),
-        strip.text = element_text(size = 12, hjust = 0),
-        panel.background = element_rect(fill = "white"),
-        plot.background = element_rect(fill = "white"),
-        panel.border = element_rect(color = "black", fill = "transparent"),
-        axis.ticks.y = element_line(),
-        panel.grid = element_blank())
-str_glue("figures/07_bad_1_rf-model_assessment_{sp_code}.png")  %>% 
-  ggsave(g_ppm, width = 20, height = 20, units = "cm", dpi = 300)
+bp_runs_2017 <- mutate(bp_runs, ppms = map(models, validate, data = ebird_test_2017))
+ppm_2017 <- bp_runs_2017 %>% 
+  select(-models) %>% 
+  unnest(cols = c(ppms))
+str_glue("{output_folder}/07_bad_1_rf-model_assessment_test_2017_{sp_code}_{date}.csv") %>% 
+  write_csv(ppm_2017, .)
 
+for(i in 1:2){
+
+  ppm <- ppm_bbs
+  if(i==2) ppm <- ppm_2017
+  val_type <- c("bbs", "2017")[i]
+
+  # plot comparing ppms
+  ppm_plot <- ppm %>% 
+    select_if(~ !is.logical(.)) %>% 
+    gather("metric", "value", -run_id, -run_name) %>%
+    filter(metric != "threshold") %>% 
+    arrange(run_id) %>% 
+    mutate(metric = factor(metric, 
+                           levels = c("mse", "auc",
+                                      "kappa", "sensitivity", "specificity"),
+                           labels = c("Mean Squared Error (MSE)", "AUC",
+                                      "Kappa", "Sensitivity", "Specificity")),
+           run = if_else(run_id == 6, "Best practice", paste("Model", run_id)),
+           run = as_factor(run),
+           start = if_else(metric == "AUC", 0.5, 0))
+  g_ppm <- ggplot(ppm_plot) +
+    aes(x = run, y = value) +
+    geom_point() +
+    geom_point(aes(y = start), color = "transparent") +
+    facet_wrap(~ metric, nrow = 2, scales = "free_y") +
+    scale_y_continuous(expand = expand_scale(mult = c(0, 0.2))) +
+    labs(x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1),
+          strip.text = element_text(size = 12, hjust = 0),
+          panel.background = element_rect(fill = "white"),
+          plot.background = element_rect(fill = "white"),
+          panel.border = element_rect(color = "black", fill = "transparent"),
+          axis.ticks.y = element_line(),
+          panel.grid = element_blank())
+  str_glue("{figure_folder}/07_bad_1_rf-model_assessment_{val_type}_{sp_code}.png")  %>% 
+    ggsave(g_ppm, width = 20, height = 20, units = "cm", dpi = 300)
+
+}
 
 # prediction ----
 
 predict_raster <- function(model, data, template) {
   # add effort covariates to prediction surface
   data <- data %>% 
-    mutate(observation_date = ymd("2016-06-15"),
+    mutate(observation_date = ymd("2018-06-15"),
+           day_of_year = yday(observation_date),
            time_observations_started = model$t_max_det,
            duration_minutes = 60,
            effort_distance_km = 1,
            number_observers = 1, 
            checklist_calibration_index = 2,
-           protocol_type = "Traveling")
+           protocol_type = "Traveling", 
+           protocol_traveling = 1)
   
   # predict
-  if (inherits(model$model, "maxnet")) {
-    pred <- predict(model$model, newdata = data, 
-                    type = "logistic", clamp = FALSE) %>% 
-      as.vector()
-  } else {
-    pred_rf <- predict(model$model, data = data, type = "response")
-    pred <- predict(model$calibration, 
-                    newdata = data.frame(pred = pred_rf$predictions), 
-                    type = "response") %>% 
-      as.vector()
-  }
+  pred <- predict_bp_model(model, data)
   pred_df <- bind_cols(data, prob = pred)
   
   # rasterize
+  print("rasterize")
   r_pred <- pred_df %>% 
     select(prob, latitude, longitude) %>% 
     st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>% 
@@ -351,11 +276,12 @@ predict_raster <- function(model, data, template) {
     rasterize(template)
   r_pred[[-1]]
 }
+
 r <- raster("data/modis_5xagg.tif")
 r_pred <- map(bp_runs$models, predict_raster, 
               data = pred_surface, template = r) %>% 
   stack()
-r_pred <- str_glue("output/07_bad_1_rf-model_predictions_{sp_code}.tif") %>% 
+r_pred <- str_glue("{output_folder}/07_bad_1_rf-model_predictions_{sp_code}_{date}.tif") %>% 
   writeRaster(r_pred, ., overwrite = TRUE) %>% 
   setNames(bp_runs$run_name)
 
@@ -395,7 +321,7 @@ g_density <- ggplot(pred_compare) +
   theme_few() +
   theme(legend.position = "right",
         legend.title = element_text(angle = 90, hjust = 0.5))
-str_glue("figures/07_bad_1_rf-model_density_{sp_code}.png")  %>% 
+str_glue("{figure_folder}/07_bad_1_rf-model_density_{sp_code}.png")  %>% 
   ggsave(g_density, width = 20, height = 12, units = "cm", dpi = 300)
 
 
@@ -407,45 +333,49 @@ r_pred_proj <- projectRaster(r_pred, crs = map_proj$proj4string, method = "ngb")
 plasma_rev <- rev(plasma(25, end = 0.9))
 gray_int <- colorRampPalette(c("#dddddd", plasma_rev[1]))
 pal <- c(gray_int(4)[2], plasma_rev)
-mx <- ceiling(100 * max(cellStats(r_pred_proj, max))) / 100
+# mx <- ceiling(100 * max(cellStats(r_pred_proj, max))) / 100
+mx <- 1
 brks <- seq(0, mx, length.out = length(pal) + 1)
 
-str_glue("figures/07_bad_1_rf-model_predictions_{sp_code}.png") %>% 
+str_glue("{figure_folder}/07_bad_1_rf-model_predictions_{sp_code}_{date}.png") %>% 
   png(width = 2400, height = 3000, res = 300)
 
-par(mfrow = c(3, 2), mar = c(0.5, 0.5, 0.5, 0.5), omi = c(0.6, 0, 0, 0))
-for (i in seq.int(nlayers(r_pred_proj))) {
-  r_plot <- r_pred_proj[[i]]
-  name <- if_else(i == 6, "Best practice", paste("Model", i))
-  
-  # set up plot area
-  plot(bcr, col = NA, border = NA)
-  plot(ne_land, col = "#dddddd", border = "#888888", lwd = 0.5, add = TRUE)
-  
-  # probability of detection
-  plot(r_plot, col = pal, breaks = brks, maxpixels = ncell(r_plot),
-       legend = FALSE, add = TRUE)
-  
-  # borders
-  plot(bcr, col = NA, border = "#000000", lwd = 1, add = TRUE)
-  plot(ne_state_lines, col = "#ffffff", lwd = 0.75, add = TRUE)
-  plot(ne_country_lines, col = "#ffffff", lwd = 1.5, add = TRUE)
-  
-  title(main = name, line = -2, cex.main = 1.5, font.main = 1)
-  box()
-}
+  par(mfrow = c(3, 2), mar = c(0.5, 0.5, 0.5, 0.5), omi = c(0.6, 0, 0, 0))
+  for (i in seq.int(nlayers(r_pred_proj))) {
+    r_plot <- r_pred_proj[[i]]
+    name <- paste("Model", i)
+    
+    # set up plot area
+    plot(bcr, col = NA, border = NA)
+    plot(ne_land, col = "#dddddd", border = "#888888", lwd = 0.5, add = TRUE)
+    
+    # probability of detection
+    plot(r_plot, col = pal, breaks = brks, maxpixels = ncell(r_plot),
+         legend = FALSE, add = TRUE)
+    
+    # borders
+    plot(bcr, col = NA, border = "#000000", lwd = 1, add = TRUE)
+    plot(ne_state_lines, col = "#ffffff", lwd = 0.75, add = TRUE)
+    plot(ne_country_lines, col = "#ffffff", lwd = 1.5, add = TRUE)
+    
+    title(main = name, line = -2, cex.main = 1.5, font.main = 1)
+    box()
+  }
 
-# legend
-par(new = TRUE, mfrow = c(1, 1), mar = c(0, 0, 0, 0), omi = c(0, 0, 0, 0))
-lbl_brks <- seq(0, mx, by = 0.1)
-image.plot(zlim = range(brks), legend.only = TRUE, col = pal,
-           smallplot = c(0.25, 0.75, 0.035, 0.055),
-           horizontal = TRUE,
-           axis.args = list(at = lbl_brks, labels = lbl_brks,
-                            fg = "black", col.axis = "black",
-                            cex.axis = 0.75, lwd.ticks = 0.5,
-                            padj = -1.8),
-           legend.args = list(text = NULL,
-                              side = 3, col = "black",
-                              cex = 1, line = 0))
+  # legend
+  par(new = TRUE, mfrow = c(1, 1), mar = c(0, 0, 0, 0), omi = c(0, 0, 0, 0))
+  lbl_brks <- seq(0, mx, by = 0.1)
+  image.plot(zlim = range(brks), legend.only = TRUE, col = pal,
+             smallplot = c(0.25, 0.75, 0.035, 0.055),
+             horizontal = TRUE,
+             axis.args = list(at = lbl_brks, labels = lbl_brks,
+                              fg = "black", col.axis = "black",
+                              cex.axis = 0.75, lwd.ticks = 0.5,
+                              padj = -1.8),
+             legend.args = list(text = NULL,
+                                side = 3, col = "black",
+                                cex = 1, line = 0))
 dev.off()
+
+
+

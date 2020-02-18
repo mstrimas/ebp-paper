@@ -1,7 +1,0 @@
-run_id,run_name,maxnet,complete,spatial_subsample,effort_filter,effort_covs,n_checklists,n_sightings
-1,maxent,TRUE,FALSE,FALSE,FALSE,FALSE,2807,2807
-2,bad_practice,FALSE,FALSE,FALSE,FALSE,FALSE,60692,2807
-3,complete,FALSE,TRUE,FALSE,FALSE,FALSE,48950,2648
-4,sss,FALSE,TRUE,TRUE,FALSE,FALSE,12000,1544
-5,effort,FALSE,TRUE,TRUE,TRUE,FALSE,9444,1028
-6,best_practice,FALSE,TRUE,TRUE,TRUE,TRUE,9444,1028
