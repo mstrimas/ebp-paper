@@ -15,7 +15,7 @@ predict_bp_model <- function(model, data) {
       pred_cal <- predict(model$calibration, 
                         newdata = data.frame(pred = pred), 
                         type = "response")
-      pred_cal <- ifelse(ifelse(pred_cal<0, 0, pred_cal)>1, 1, pred_cal)
+      pred_cal <- ifelse(pred_cal<0, 0, ifelse(pred_cal>1, 1, pred_cal))
       pred <- pred_cal
     }
   } 
