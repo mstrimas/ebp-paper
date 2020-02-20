@@ -53,7 +53,8 @@ bbs_obs_date <- eb_zf %>%
         filter(no_cl >= 40)
 
 bbs_obs_date_loc <- eb_zf %>%
-        filter(paste0(observation_date, observer_id) %in% paste0(bbs_obs_date$observation_date, bbs_obs_date$observer_id))
+        filter(paste0(observation_date, observer_id) %in% paste0(bbs_obs_date$observation_date, bbs_obs_date$observer_id)) %>%
+        filter(duration_minutes==3, all_species_reported==TRUE)
 
 # split by observer and date
 sp <- split(bbs_obs_date_loc, list(bbs_obs_date_loc$observer_id, bbs_obs_date_loc$observation_date), drop = TRUE)
@@ -96,7 +97,7 @@ threshold1 <- 2
 threshold2 <- 5
 threshold3 <- 9
 
-obs_date_nn$bbs <- ifelse(obs_date_nn$min_dist<1000 & obs_date_nn$number_near1 > (threshold1 - 1)  & obs_date_nn$number_near3 > (threshold3 - 1)  & obs_date_nn$number_near3 > (threshold3 - 1), 1, 0)
+obs_date_nn$bbs <- ifelse(obs_date_nn$min_dist<2000 & obs_date_nn$number_near1 > (threshold1 - 1)  & obs_date_nn$number_near3 > (threshold3 - 1)  & obs_date_nn$number_near3 > (threshold3 - 1), 1, 0)
 
 bbs <- obs_date_nn %>% filter(bbs==1)
 not_bbs <- obs_date_nn %>% filter(bbs==0)
@@ -107,12 +108,15 @@ not_bbs <- obs_date_nn %>% filter(bbs==0)
 par(mfrow=c(2,1))
 
 # estimated 3min point counts from bbs routes shown in red
-plot(obs_date_nn$longitude, obs_date_nn$latitude, pch=16, cex=0.5)
+plot(obs_date_nn$longitude, obs_date_nn$latitude, pch=16, cex=0.5,
+#  xlim=c(-77, -76), ylim=c(36, 38))
+  xlim=c(-86, -85), ylim=c(30, 32))
 points(bbs$longitude, bbs$latitude, pch=16, col="red", cex=0.5)
 points(not_bbs$longitude, not_bbs$latitude, pch=16, col="black", cex=0.5)
 
 # estimated 3min point counts NOT from bbs routes shown in red
-plot(obs_date_nn$longitude, obs_date_nn$latitude, pch=".")
+plot(obs_date_nn$longitude, obs_date_nn$latitude, pch=".",
+  xlim=c(-86, -85), ylim=c(30, 32))
 points(bbs$longitude, bbs$latitude, pch=16, col="black", cex=0.5)
 points(not_bbs$longitude, not_bbs$latitude, pch=16, col="red", cex=0.5)
 
@@ -141,7 +145,7 @@ eb_zf_all <- eb_zf %>%
 
 
 # ####################################################################
-# FIND AND FLAG SUSPECTED BBS COUNTS FROM 'BAD' EBIRD DATASET
+# FIND AND FLAG SUSPECTED BBS COUNTS WITHIN EBIRD DATASET
 
 # Some BBS observers add their observations into the eBird database
 
