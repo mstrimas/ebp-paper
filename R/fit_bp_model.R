@@ -1,5 +1,5 @@
 
-# t <- 1
+# t <- 2
 # maxnet <- bp_runs$maxnet[t]
 # complete <- bp_runs$complete[t]
 # spatial_subsample <- bp_runs$spatial_subsample[t]
@@ -10,6 +10,7 @@
 # regime <- sample_regime
 # prop_data <- 1
 # calibrate <- TRUE
+# subsample_seed <- 1
 
 
 fit_bp_model <- function(maxnet, 
@@ -19,6 +20,8 @@ fit_bp_model <- function(maxnet,
                          spacing, regime, 
                          prop_data = 1, 
                          calibrate = TRUE, 
+                         calibrate_plot = FALSE,
+                         calibrate_plot_name = NULL,
                          subsample_seed = NULL,
                          ...) {
 
@@ -97,7 +100,7 @@ fit_bp_model <- function(maxnet,
     # define the positive proportion of the training data
     # for balanced random forest
     pos_prop <- mean(as.numeric(as.character(data$species_observed)))
-    print(pos_prop)
+    print(paste("train prevalence =", round(pos_prop, 3)))
 
     # covert response to factor
     data$species_observed <- factor(data$species_observed, levels=c("0", "1"))
@@ -112,8 +115,8 @@ fit_bp_model <- function(maxnet,
                   importance = "impurity",
                   probability = TRUE,
                   mtry = sqrt(ncol(data) - 1),
-                  replace = TRUE, 
-                  sample.fraction = c(pos_prop, pos_prop))
+                  replace = TRUE)
+                  # ,sample.fraction = c(pos_prop, pos_prop))
     
     # calibrate
     if(calibrate){
@@ -129,6 +132,24 @@ fit_bp_model <- function(maxnet,
                         data = mod_pred_train, 
     #                    family = binomial, 
                         gamma = 1.4)
+
+        if(calibrate_plot){
+          if(is.null(calibrate_plot_name)) calibrate_plot_name <- paste0("calibration_plot_", Sys.Date(), ".png")
+          png(calibrate_plot_name, width = 9, height = 9, units="cm", pointsize = 9, res = 300)
+            plot(mod_pred_train$pred, jitter(mod_pred_train$obs) + 0.2 - mod_pred_train$obs*0.4,
+              xlim=c(0, 1), ylim=c(0,1), 
+              xaxt="n", yaxt= "n",
+              xlab = "predicted", ylab = "observed")
+            axis(side = 1, at=c(0, 0.5, 1))
+            axis(side = 2, at=c(0, 0.5, 1))
+            x <- seq(0, 1, by=0.01)
+            pred_y <- predict(mod_cal, newdata = data.frame(pred = x))
+            pred_y <- ifelse(pred_y<0, 0, ifelse(pred_y>1, 1, pred_y))
+            lines(x, pred_y, col="red", lwd=2)
+            segments(x0 = 0, y0 = 0, x1 = 1, y1 = 1, col="yellow")
+            segments(x0 = 0, y0 = 0.002, x1 = 1, y1 = 1.002, col="black")
+          dev.off()
+        }
     }
     if(!calibrate) mod_cal <- NULL
     
