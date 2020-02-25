@@ -1,5 +1,5 @@
   
-validate <- function(model, data) {
+validate <- function(model, data, bbs_combine = FALSE) {
 
   pred_vec <- predict_bp_model(model, data)
   pred <- data.frame(id = nrow(data), 
@@ -7,6 +7,10 @@ validate <- function(model, data) {
                      pred = pred_vec)
 
   pred <- drop_na(pred)
+
+  if(bbs_combine){
+    
+  }
   
   # validation metrics
   print("calculate ppms")

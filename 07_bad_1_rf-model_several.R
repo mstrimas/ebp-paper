@@ -38,6 +38,7 @@ sp_code <- ebird_species(species, "code")
 sample_regime <- "together"
 sample_spacing <- 5
 calibrate <- TRUE
+anchor_model <- 6
 
 
 # set paths ----
@@ -45,8 +46,8 @@ figure_folder <- "figures/"
 output_folder <- "output/"
 
 date <- Sys.Date()
-date <- "2020-02-15"
-run_name <- paste0("ss_", sample_regime, "_rf_balanced_val_both_", date)
+date <- "2020-02-19"
+run_name <- paste0("ss_", sample_regime, "_rf_val_both_", date)
 
 # load data ----
 
@@ -136,6 +137,9 @@ for(i in 1:nsim){
   # standardized test dataset for all models
   test_bbs_id <- ebird_habitat_sample %>%
     filter(type == "test_bbs") %>%
+    mutate(week = lubridate::week(observation_date)) %>%
+    hex_sample(spacing = sample_spacing,
+                         regime = "both", byvar = "week") %>%
     select(checklist_id, sampling_event_identifier, type) %>%
     mutate(selected = 1)
 
@@ -195,7 +199,8 @@ for(i in 1:nsim){
 
   bp_runs$models <- pmap(bp_runs, fit_bp_model, data = model_data,
                        spacing = sample_spacing, regime = sample_regime,
-                       calibrate = calibrate, subsample_seed = i)
+                       calibrate = calibrate, calibrate_plot = FALSE, 
+                       subsample_seed = i)
 
   # validation ----
   print("validation - bbs data")
@@ -248,7 +253,7 @@ str_glue("{output_folder}/07_bad_1_rf-model_assessment_multi_{sp_code}_{date}.pn
   ppm_plot <- all_ppms %>% 
     select_if(~ !is.logical(.)) %>% 
     gather("metric", "value", -run_id, -run_name, -sim_id, -val_type) %>%
-    filter(metric != "threshold") %>% 
+    filter(metric != "threshold", metric != "n_checklists", metric != "n_pos") %>% 
     arrange(val_type, sim_id, run_id) %>% 
     mutate(metric_label = ifelse(metric %in% c("auc", "mse", "tss"), str_to_upper(metric), str_to_title(metric))) %>%
     mutate(metric_label = factor(metric_label, levels = c("MSE", "AUC", "Kappa", "Sensitivity", "Specificity", "TSS"))) %>%
@@ -313,11 +318,11 @@ ppms_gather <- all_ppms %>%
   gather("metric", "value", -run_id, -run_name, -sim_id, -val_type)
 
 diff_plot <- ppms_gather %>%
-  filter(run_id == 2) %>%
+  filter(run_id == anchor_model) %>%
   select(metric, sim_id, value, val_type) %>%
-  rename(value_mod2 = value) %>%
+  rename(value_anchor = value) %>%
   right_join(ppms_gather) %>%
-  mutate(diff = value - value_mod2) %>%
+  mutate(diff = value - value_anchor) %>%
   arrange(val_type, sim_id, run_id) %>% 
   mutate(run = paste("Model", run_id),
          run = as_factor(run),
@@ -325,6 +330,8 @@ diff_plot <- ppms_gather %>%
   filter(!is.na(metric))
 
 ## ggplot is the worst
+
+add_grey <- TRUE
 
 for(i in 1:3){
 
@@ -342,7 +349,7 @@ for(i in 1:3){
             summarise(max_abs = max(abs(diff))) %>%
             ungroup()
 
-  str_glue("{figure_folder}/07_bad_1_rf-model_assessment_multi_DIFF_{val_type_plot}_{sp_code}.png") %>%
+  str_glue("{figure_folder}/07_bad_1_rf-model_assessment_multi_DIFF_{val_type_plot}_anchor{anchor_model}_{sp_code}_grey{add_grey}.png") %>%
     png(width = 21, height = 17, units="cm", res = 600)
 
         par(mfrow = c(2, 3), mar = c(1, 5, 1, 1), oma = c(4, 1, 1, 1))
@@ -360,12 +367,19 @@ for(i in 1:3){
                   col = "white",
                   xlab = "", ylab = "",
                   ylim=c(-1*maxyy, maxyy), las = 2, names = xnames)
-          abline(h=0, lwd=2, col="grey70")
+          if(!add_grey) abline(h=0, lwd=2, col="grey70")
+          if(add_grey) {
+            ymin <- -1
+            ymax <- 0
+            if(j==1) {ymin <- 0; ymax <- 1 }
+            polygon(x = c(-1, 10, 10, -1, -1), y = c(ymin, ymin, ymax, ymax, ymin), col="grey78", border = alpha("white", 0))
+          }
           par(new=TRUE)
           boxplot(as.formula("diff ~ run"), 
                   data = plot_data[plot_data$metric==m,],
                   range = 0, boxwex = 0.8, lty = 1, staplewex = 0,
                   xlab = "", ylim = c(-1*maxyy, maxyy), names = rep("", 6), 
+                  col = alpha("white", 0.4), 
                   xaxt="n", yaxt="n", 
                   ylab = bquote(Delta~.(levels(plot_data$metric)[j])))
           text(x = 0.5, y = maxyy*0.95, 

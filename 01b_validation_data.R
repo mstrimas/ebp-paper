@@ -172,6 +172,33 @@ write_csv(eb_bad_zf_all, data_bad_loc)
 
 
 # ####################################################################
+# SUMMARISE NUMBERS
+
+# all data
+nrow(eb_bad_zf_all)
+
+# split by year
+table(year(eb_bad_zf_all$observation_date))
+
+# split by year and bbs
+eb_bad_zf %>%
+        mutate(checklist_id = as.character(checklist_id)) %>%
+        left_join(bbs_for_merge) %>%
+        mutate(bbs = ifelse(is.na(bbs), 0, 1)) %>%
+        mutate(yr = year(observation_date)) %>%
+        select(bbs, yr) %>%
+        table()
+
+test <- eb_bad_zf %>%
+        mutate(checklist_id = as.character(checklist_id)) %>%
+        left_join(bbs_for_merge) %>%
+        mutate(bbs = ifelse(is.na(bbs), 0, 1)) %>%
+        mutate(yr = year(observation_date)) %>%
+        filter(yr == 2017, bbs == 0)
+
+
+
+# ####################################################################
 # PLOT DIFFERENT DATASETS
 
 map_proj <- st_crs(102003)
@@ -280,6 +307,9 @@ min(yday(test_data_bbs$observation_date))
 # day 138 = may 18
 
 min(yday(train_data$observation_date))
+
+
+
 
 
 

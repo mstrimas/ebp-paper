@@ -45,7 +45,7 @@ output_folder <- "output/"
 
 
 date <- Sys.Date()
-run_name <- paste0("ss_together_rf_balanced_val_both_", date)
+run_name <- paste0("ss_together_rf_val_both_", date)
 
 # load data ----
 
@@ -122,6 +122,9 @@ set.seed(1)
 # standardized test dataset for all models
 test_bbs_id <- ebird_habitat %>%
   filter(type == "test_bbs") %>%
+  mutate(week = lubridate::week(observation_date)) %>%
+  hex_sample(spacing = sample_spacing,
+                       regime = "both", byvar = "week") %>%
   select(checklist_id, sampling_event_identifier, type) %>%
   mutate(selected = 1)
 
@@ -175,13 +178,14 @@ bp_runs <- tibble(run_name = c("maxent", "bad_practice", "complete",
                   effort_covs = c(0, 0, 0, 0, 0, 1)) %>% 
   mutate_if(is.numeric, as.logical) %>% 
   mutate(run_id = row_number()) %>% 
-  select(run_id, everything())
+  select(run_id, everything()) %>%
+  mutate(calibrate_plot_name = paste0(figure_folder, "calibration_model_", run_id, "_", date, ".png"))
 
 
 # fit bad practice model ----
 bp_runs$models <- pmap(bp_runs, fit_bp_model, data = model_data,
                        spacing = sample_spacing, regime = sample_regime, 
-                       calibrate = calibrate)
+                       calibrate = calibrate, calibrate_plot = TRUE)
 
 # amount of data in each run
 run_counts <- bp_runs %>% 

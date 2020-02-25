@@ -31,6 +31,7 @@ sp_code <- ebird_species(species, "code")
 sample_regime <- "together"
 sample_spacing <- 5
 calibrate <- TRUE
+anchor_model <- 2
 
 
 # --------------------------------------------------------------------
@@ -39,8 +40,8 @@ figure_folder <- "figures/sample_size/"
 output_folder <- "output/sample_size/"
 
 date_now <- Sys.Date()
-date <- date_now
-run_name <- paste0("ss_together_rf_balanced_val_both_", date)
+date <- "2020-02-20"
+run_name <- paste0("ss_together_rf_val_both_", date)
 
 # load data ----
 
@@ -252,7 +253,7 @@ ppm_plot <- all_ppms %>%
   mutate(model_name = ifelse(good, "Model 6", "Model 2")) %>%
   select_if(~ !is.logical(.)) %>% 
   gather("metric", "value", -run_id, -sim_id, -val_type, -prop_data, -model_name, -n_checklists, -n_pos) %>%
-  filter(metric != "threshold") %>% 
+  filter(metric != "threshold", metric != "n_checklists", metric != "n_pos") %>% 
   arrange(val_type, sim_id, run_id) %>% 
   mutate(metric_short = metric) %>%
   mutate(metric = ifelse(metric %in% c("auc", "mse", "tss"), str_to_upper(metric), str_to_title(metric))) %>%
@@ -608,7 +609,8 @@ diff_plot <- all_ppms %>%
   mutate(model_code = ifelse(model_name == "Model 6", "mod6", "mod2")) %>%
   select(-model_name, -run_id) %>%
   spread(model_code, value) %>% 
-  mutate(diff = mod6 - mod2) %>%
+  mutate(anchor_col = anchor_model) %>%
+  mutate(diff = ifelse(anchor_col==2, mod6 - mod2, mod2 - mod6)) %>%
   mutate(metric_short = metric) %>%
   mutate(metric = ifelse(metric %in% c("auc", "mse", "tss"), str_to_upper(metric), str_to_title(metric))) %>%
   mutate(metric = factor(metric, levels = c("MSE", "AUC", "Kappa", "Sensitivity", "Specificity", "TSS"))) %>%
@@ -630,7 +632,7 @@ for(i in 1:3){
 
     diff_d <- filter(diff_plot, val_type==plot_val_type)
 
-    str_glue("{figure_folder}/07_bad_4_sample-size-effect_assessment_DIFF_{plot_val_type}_{sp_code}.png") %>% 
+    str_glue("{figure_folder}/07_bad_4_sample-size-effect_assessment_DIFF_{plot_val_type}_anchor{anchor_model}_{sp_code}.png") %>% 
       png(width = 21, height = 17, units="cm", res = 600)
 
         par(mfrow = c(2, 3), mar = c(1, 5, 1, 1), oma = c(4, 1, 1, 1))
@@ -682,13 +684,15 @@ for(i in 1:3){
             ungroup()
 
 
+add_grey <- TRUE
+
 for(i in 1:3){
 
     plot_val_type <- c("2017", "bbs", "2017_bal")[i]
 
     diff_d <- filter(diff_plot, val_type==plot_val_type)
 
-    str_glue("{figure_folder}/07_bad_4_sample-size-effect_assessment_DIFF_freey_{plot_val_type}_{sp_code}.png") %>% 
+    str_glue("{figure_folder}/07_bad_4_sample-size-effect_assessment_DIFF_freey_{plot_val_type}_anchor{anchor_model}_{sp_code}_grey{add_grey}.png") %>% 
       png(width = 21, height = 17, units="cm", res = 600)
 
         par(mfrow = c(2, 3), mar = c(1, 5, 1, 1), oma = c(4, 1, 1, 1)) # 4
@@ -707,12 +711,19 @@ for(i in 1:3){
                   xaxt = "n", xlim=c(0.5, 5.5), 
                   yaxt = "n", ylim = c(-1*maxyy, maxyy),
                   xlab = "", ylab = "")
-          abline(h=0, lwd=2, col="grey70")
+          if(!add_grey) abline(h=0, lwd=2, col="grey70")
+
+          if(add_grey) {
+            ymin <- -1
+            ymax <- 0
+            if(j==1) {ymin <- 0; ymax <- 1 }
+            polygon(x = c(-1, 10, 10, -1, -1), y = c(ymin, ymin, ymax, ymax, ymin), col="grey78", border = alpha("white", 0))
+          }
           par(new=TRUE)
           boxplot(as.formula("diff ~ prop_data"), 
                   data = diff_d[diff_d$metric==m,],
                   range = 0, boxwex = 0.8, lty = 1, staplewex = 0,
-#                  boxcol = "transparent", 
+                 col = alpha("white", 0.4), 
                   xaxt = "n", xlim=c(0.5, 5.5), ylim = c(-1*maxyy, maxyy),
                   xlab = xlabel, xpd = NA, 
                   ylab = bquote(Delta~.(levels(diff_d$metric)[j])))

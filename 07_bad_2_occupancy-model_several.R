@@ -7,13 +7,16 @@ library(dggridR)
 library(unmarked)
 library(MuMIn)
 library(AICcmodavg)
+library(PresenceAbsence)
 library(fields)
 library(viridis)
 library(dplyr)
 library(purrr)
 library(readr)
 library(stringr)
+library(tidyr)
 library(lubridate)
+
 # resolve namespace conflicts
 select <- dplyr::select
 projection <- raster::projection
@@ -24,6 +27,10 @@ species <- "Wood Thrush"
 sp_code <- ebird_species(species, "code")
 # setup spatial sampling regime
 sample_spacing <- 5
+
+# set paths ----
+figure_folder <- "figures/"
+output_folder <- "output/"
 
 
 # load data ----
@@ -62,12 +69,18 @@ ebird_habitat <- inner_join(ebird, habitat, by = "checklist_id")
 cci_file <- paste0("data/cci_", data_tag, ".csv")
 if (file.exists(cci_file)) {
   cci <- read_csv(cci_file)
-  ebird_habitat <- left_join(ebird_habitat, cci, by = "checklist_id")
+  ebird_habitat <- inner_join(ebird_habitat, cci, by = "checklist_id") %>% 
+    filter(!is.na(checklist_calibration_index))
+  figure_folder <- paste0(figure_folder, "with_cci/occupancy/")
+  output_folder <- paste0(output_folder, "with_cci/occupancy/")
+} else {
+  figure_folder <- paste0(figure_folder, "without_cci/occupancy/")
+  output_folder <- paste0(output_folder, "without_cci/occupancy/")  
 }
 
+dir.create(figure_folder, recursive = TRUE)
+dir.create(output_folder, recursive = TRUE)
 
-ebird_habitat <- ebird_habitat %>%
-        mutate(type_week = paste(type, lubridate::week(observation_date), sep="_"))
 
 # map data ----
 
@@ -90,9 +103,18 @@ bcr <- read_sf(f_gpkg, "bcr") %>%
   st_geometry()
 
 
+# formatting data columns
+ebird_habitat <- ebird_habitat %>%
+        mutate(protocol_traveling = ifelse(protocol_type == "Traveling", 1, 0)) %>%
+        mutate(time_observations_started = as.numeric(as.character(time_observations_started))) %>%
+        mutate(number_observers = as.numeric(as.character(number_observers))) %>%
+        mutate(duration_minutes = as.numeric(as.character(duration_minutes))) %>%
+        mutate(day_of_year = yday(observation_date))
+
+
 # setup bad practice combinations ----
 
-bp_runs <- tibble(run_name = c("bad_practice", "complete", 
+bp_runs_master <- tibble(run_name = c("bad_practice", "complete", 
                                "sss", "effort", "best_practice"),
                   complete = c(0, 1, 1, 1, 1),
                   spatial_subsample = c(0, 0, 1, 1, 1),
@@ -103,16 +125,26 @@ bp_runs <- tibble(run_name = c("bad_practice", "complete",
   select(run_id, everything())
 
 
-# fit bad practice model ----
-set.seed(1)
+ebird_habitat$locality_id <- paste0(round(ebird_habitat$longitude, 6), "_", round(ebird_habitat$latitude, 6))
+
+
+nsim <- 25
+
+for(i in 1:nsim){
 
   print("")
   print("=======================================")
   print(paste("running for sim", i))
+  set.seed(i)
 
   # reduce to 75% of all data (in all subsets)
   ebird_habitat_sample <- ebird_habitat %>%
       sample_frac(0.75)
+
+
+
+
+
 
 
 fit_bp_model_occu <- function(complete, spatial_subsample, 
