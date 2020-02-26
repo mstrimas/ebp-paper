@@ -116,4 +116,6 @@ bbs_routes %>%
   inner_join(bbs_routes, by = c("observer_id", "observation_date", "route")) %>% 
   arrange(observer_id, observation_date, time_observations_started)
 # definitely some cases where observer throws in a 3 min bbs-like count 
-# before, after, or between routes
+# before, after, or between routes, e.g.
+# bbs stop: https://ebird.org/checklist/S36974226
+# bbs-like checklist after route: https://ebird.org/checklist/S36967837
